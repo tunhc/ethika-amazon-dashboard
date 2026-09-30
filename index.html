@@ -211,6 +211,7 @@
     <div class="tabbar" id="tabbar">
       <button class="tab-btn active" data-tab="sales">Sales performance</button>
       <button class="tab-btn" data-tab="inventory">Inventory overview</button>
+      <button class="tab-btn" data-tab="returns">Returns</button>
     </div>
 
     <div class="filterbar">
@@ -387,6 +388,37 @@
       </div>
     </div>
 
+    <div id="tab-returns" class="tab-panel" style="display:none;">
+      <p class="section-note" id="returns-period-note"></p>
+
+      <div class="kpis" id="kpi-returns"></div>
+
+      <div class="panel">
+        <div class="panel-head"><div><h3>Returns by day</h3><div class="ph-sub" id="returns-trend-sub">Units returned per day across the report window</div></div></div>
+        <div id="returns-trend-chart"></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head"><div><h3>Top return reasons</h3><div class="ph-sub">Customer-selected reason code, by units returned</div></div></div>
+          <div id="returns-reason-chart"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><h3>Return rate by category</h3><div class="ph-sub">Units returned &divide; units sold in the same window &middot; top 10</div></div></div>
+          <div id="returns-cat-chart"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="returns-table-panel">
+        <div class="panel-head"><div><h3>Most-returned SKUs</h3><div class="ph-sub" id="returns-table-sub">Ranked by units returned in the report window</div></div></div>
+        <div class="table-scroll"><table id="returns-table">
+          <thead><tr><th>Product</th><th>Category</th><th class="num">Returned</th><th class="num">Sold (window)</th><th class="num">Return rate</th><th>Top reason</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <button class="more-btn" id="returns-more">Show 15 more</button>
+      </div>
+    </div>
+
     <footer class="notes" id="footer-notes"></footer>
   </div>
 
@@ -470,7 +502,8 @@
     notsoldShown: 15,
     sizegapShown: 15,
     dosBucket: null,
-    dosShown: 25
+    dosShown: 25,
+    returnsShown: 15
   };
 
   var DATE_PRESETS = [];
@@ -1032,6 +1065,141 @@
     document.getElementById('sizegap-more').style.display = rows.length>state.sizegapShown ? 'block' : 'none';
   }
 
+  // ================= RETURNS (customer returns report) =================
+  function returnsWindowLabel(){
+    if (!DATA.returns) return '';
+    var a = DATA.returns.dateMin, b = DATA.returns.dateMax;
+    if (a.slice(0,7) === b.slice(0,7)){
+      var d = new Date(a + 'T00:00:00Z');
+      return d.toLocaleString('en-US', {month:'short', year:'numeric', timeZone:'UTC'});
+    }
+    return a + '–' + b;
+  }
+  function formatReasonLabel(code){
+    if (!code) return 'No reason given';
+    return code.replace(/_/g,' ').toLowerCase().replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+  }
+  function getReturnsSummary(){
+    if (!DATA.returns) return {qty:0, sold:0};
+    var divIdx = state.divIdx, catIdx = state.catIdx;
+    if (divIdx<0 && catIdx<0) return {qty: DATA.returns.totalQty, sold: DATA.returns.soldOverall};
+    var qty=0, sold=0;
+    DATA.returns.byCat.forEach(function(r){
+      var ci=r[0], di=r[1], q=r[2], s=r[3];
+      if (divIdx>=0 && di!==divIdx) return;
+      if (catIdx>=0 && ci!==catIdx) return;
+      qty += q; sold += s;
+    });
+    return {qty:qty, sold:sold};
+  }
+  function returnRateByCat(){
+    var divIdx = state.divIdx, catIdx = state.catIdx;
+    return DATA.returns.byCat.filter(function(r){
+      if (divIdx>=0 && r[1]!==divIdx) return false;
+      if (catIdx>=0 && r[0]!==catIdx) return false;
+      return r[3] > 0;
+    }).map(function(r){
+      return {catIdx:r[0], divIdx:r[1], qty:r[2], sold:r[3], rate: r[2]/r[3]*100};
+    }).sort(function(a,b){ return b.rate - a.rate; }).slice(0,10);
+  }
+  function renderReturnsTrend(rows){
+    var host = document.getElementById('returns-trend-chart');
+    host.innerHTML = '';
+    if (!rows.length){ host.innerHTML = '<div class="empty-note">No returns data for this selection.</div>'; return; }
+    var W=1000, H=180, padL=36, padR=10, padT=10, padB=24;
+    var innerW = W-padL-padR, innerH = H-padT-padB;
+    var maxV = Math.max.apply(null, rows.map(function(r){return r.qty;})) || 1;
+    var bw = innerW / rows.length;
+    var svg = el('svg', {viewBox:'0 0 '+W+' '+H, class:'chart-svg'});
+    [0,0.5,1].forEach(function(f){
+      var v = maxV*f, yy = padT + innerH - (v/maxV)*innerH;
+      svg.appendChild(el('line', {x1:padL, x2:W-padR, y1:yy, y2:yy, class:'grid-line'}));
+      var lbl = el('text', {x:2, y:yy+3, class:'tick-label'}); lbl.textContent = fmtInt(v); svg.appendChild(lbl);
+    });
+    svg.appendChild(el('line', {x1:padL, x2:W-padR, y1:padT+innerH, y2:padT+innerH, class:'baseline'}));
+    rows.forEach(function(r, i){
+      var h = (r.qty/maxV) * innerH;
+      var x = padL + i*bw;
+      var rect = el('rect', {x:x+1, y:padT+innerH-h, width:Math.max(1,bw-2), height:Math.max(0,h), rx:2, fill:'var(--accent-2)'});
+      svg.appendChild(rect);
+      var hit = el('rect', {x:x, y:padT, width:bw, height:innerH, fill:'transparent'});
+      hit.addEventListener('pointermove', function(evt){
+        var rectB = svg.getBoundingClientRect();
+        var html = '<div class="tt-title">'+esc(r.date)+'</div><div class="tt-row"><span>Returns</span><span class="tt-val">'+fmtInt(r.qty)+'</span></div>';
+        showTooltip(evt.clientX, rectB.top, html);
+      });
+      hit.addEventListener('pointerleave', hideTooltip);
+      svg.appendChild(hit);
+    });
+    var t0 = el('text', {x:padL, y:H-6, class:'tick-label'}); t0.textContent = rows[0].date; svg.appendChild(t0);
+    var t1 = el('text', {x:W-padR, y:H-6, class:'tick-label', 'text-anchor':'end'}); t1.textContent = rows[rows.length-1].date; svg.appendChild(t1);
+    host.appendChild(svg);
+  }
+  function renderReturns(){
+    if (!DATA.returns) return;
+    var divIdx = state.divIdx, catIdx = state.catIdx;
+    var rsum = getReturnsSummary();
+    var rate = rsum.sold>0 ? rsum.qty/rsum.sold*100 : null;
+
+    document.getElementById('returns-period-note').textContent =
+      'Return window: ' + DATA.returns.dateMin + ' to ' + DATA.returns.dateMax +
+      (divIdx>=0 ? ' · ' + divName(divIdx) : '') +
+      (catIdx>=0 ? ' · ' + DATA.meta.categories[catIdx] : '') +
+      ' — fixed snapshot, not affected by the date-range filter above';
+
+    var skuRows = DATA.returns.bySku.filter(function(r){
+      if (divIdx>=0 && r[2]!==divIdx) return false;
+      if (catIdx>=0 && r[3]!==catIdx) return false;
+      return true;
+    }).sort(function(a,b){ return b[4]-a[4]; });
+
+    var kpiHost = document.getElementById('kpi-returns');
+    kpiHost.innerHTML = '';
+    kpiHost.appendChild(tile('Units returned', fmtInt(rsum.qty)));
+    kpiHost.appendChild(tile('Return rate', rate!=null ? rate.toFixed(1)+'%' : '–'));
+    kpiHost.appendChild(tile('SKUs affected', fmtInt(skuRows.length)));
+    kpiHost.appendChild(tile('Distinct orders (all)', fmtInt(DATA.returns.distinctOrders)));
+    Array.prototype.forEach.call(kpiHost.querySelectorAll('[data-delta]'), function(d){ d.remove(); });
+
+    renderReturnsTrend(DATA.returns.daily.map(function(r){ return {date:r[0], qty:r[1]}; }));
+
+    var reasonItems = DATA.returns.byReason.slice(0,8).map(function(r){
+      return {label: formatReasonLabel(r[0]), value: r[1], color:'var(--seq-400)'};
+    });
+    renderHBar('returns-reason-chart', reasonItems, {fmt:fmtInt, fmtFull:fmtInt, metricLabel:'Returns'});
+
+    var catRows = returnRateByCat();
+    renderHBar('returns-cat-chart', catRows.map(function(r){
+      return {label: catLabel(r.catIdx, r.divIdx), value: r.rate, color: divColor(r.divIdx),
+        sub: fmtInt(r.qty)+' returned / '+fmtInt(r.sold)+' sold', subLabel:'Returned / sold'};
+    }), {fmt:function(v){return v.toFixed(1)+'%';}, fmtFull:function(v){return v.toFixed(1)+'%';}, metricLabel:'Return rate'});
+
+    document.getElementById('returns-table-sub').textContent =
+      skuRows.length.toLocaleString('en-US') + ' SKU' + (skuRows.length===1?'':'s') + ' with at least one return in the window';
+
+    var shown = skuRows.slice(0, state.returnsShown);
+    var tbody = document.querySelector('#returns-table tbody');
+    tbody.innerHTML = '';
+    if (!shown.length){
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-note">No returns in this filter.</td></tr>';
+    }
+    shown.forEach(function(r){
+      var sku=r[0], di=r[2], ci=r[3], qty=r[4], topReason=r[5], sold=r[6], asin=r[7], name=r[8];
+      var rate2 = sold>0 ? (qty/sold*100) : null;
+      var tr = document.createElement('tr');
+      var nameHtml = amazonLink(asin, '<div class="prod-name">'+esc(name||sku)+'</div><div class="prod-sub">'+esc(sku)+'</div>');
+      tr.innerHTML =
+        '<td>'+nameHtml+'</td>'+
+        '<td><span class="chip chip-div" style="background:'+divColor(di)+'">'+esc(divName(di))+'</span> '+esc(catLabel(ci,di))+'</td>'+
+        '<td class="num">'+fmtInt(qty)+'</td>'+
+        '<td class="num">'+(sold>0?fmtInt(sold):'–')+'</td>'+
+        '<td class="num">'+(rate2!=null?rate2.toFixed(1)+'%':'–')+'</td>'+
+        '<td><span class="chip chip-action">'+esc(formatReasonLabel(topReason))+'</span></td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('returns-more').style.display = skuRows.length>state.returnsShown ? 'block' : 'none';
+  }
+
   function renderDelta(el, cur, prev, unit){
     if (prev<=0){ el.textContent=''; return; }
     var pct = (cur-prev)/prev*100;
@@ -1085,6 +1253,13 @@
     var t2=tile('Units sold', fmtInt(cur.units)); kpiHost.appendChild(t2); renderDelta(t2.querySelector('[data-delta]'), cur.units, prev.units);
     var t3=tile(ordersLabel, fmtInt(cur.orders)); kpiHost.appendChild(t3); renderDelta(t3.querySelector('[data-delta]'), cur.orders, prev.orders);
     var t4=tile(aovLabel, '$'+aov.toFixed(2)); kpiHost.appendChild(t4); renderDelta(t4.querySelector('[data-delta]'), aov, aovPrev);
+    if (DATA.returns){
+      var rsumKpi = getReturnsSummary();
+      var rateKpi = rsumKpi.sold>0 ? rsumKpi.qty/rsumKpi.sold*100 : null;
+      var t5=tile('Return rate ('+returnsWindowLabel()+')', rateKpi!=null?rateKpi.toFixed(1)+'%':'–');
+      kpiHost.appendChild(t5);
+      t5.querySelector('[data-delta]').remove();
+    }
 
     // trend chart
     var trendRows = Object.keys(cur.byDate).map(function(k){return cur.byDate[k];}).sort(function(a,b){return a.date<b.date?-1:1;});
@@ -1116,6 +1291,7 @@
     renderNotSold(range);
     renderProducts(range, prevRange);
     renderInventory();
+    renderReturns();
 
     document.getElementById('meta-info').textContent =
       'Data: ' + DATA.meta.dateMin + ' to ' + DATA.meta.dateMax + ' · inventory snapshot ' + INV_SNAPSHOT_DATE;
@@ -1387,7 +1563,7 @@
 
     document.getElementById('f-reset').addEventListener('click', function(){
       state.dateKey='last90'; state.customStart=''; state.customEnd=''; state.divIdx=-1; state.catIdx=-1; state.mktIdx=-1; state.prodSearch=''; state.prodShown=25;
-      state.notsoldShown=15; state.sizegapShown=15; state.dosBucket=null; state.dosShown=25;
+      state.notsoldShown=15; state.sizegapShown=15; state.dosBucket=null; state.dosShown=25; state.returnsShown=15;
       document.getElementById('prod-search').value='';
       document.getElementById('grp-date-custom').style.display='none';
       dateSel.value='last90'; divSel.value='-1';
@@ -1401,6 +1577,7 @@
       Array.prototype.forEach.call(document.querySelectorAll('.tab-btn'), function(b){ b.classList.toggle('active', b===btn); });
       document.getElementById('tab-sales').style.display = state.activeTab==='sales' ? '' : 'none';
       document.getElementById('tab-inventory').style.display = state.activeTab==='inventory' ? '' : 'none';
+      document.getElementById('tab-returns').style.display = state.activeTab==='returns' ? '' : 'none';
       Array.prototype.forEach.call(document.querySelectorAll('.grp-salesonly'), function(g){ g.style.display = state.activeTab==='sales' ? '' : 'none'; });
       document.getElementById('grp-date-custom').style.display = (state.activeTab==='sales' && state.dateKey==='custom') ? 'flex' : 'none';
     });
@@ -1408,6 +1585,7 @@
     document.getElementById('dos-more').addEventListener('click', function(){ state.dosShown += 25; renderInventory(); });
     document.getElementById('notsold-more').addEventListener('click', function(){ state.notsoldShown += 15; renderNotSold(currentRange()); });
     document.getElementById('sizegap-more').addEventListener('click', function(){ state.sizegapShown += 15; renderSizeGap(); });
+    document.getElementById('returns-more').addEventListener('click', function(){ state.returnsShown += 15; renderReturns(); });
 
     document.getElementById('trend-toggle').addEventListener('click', function(e){
       var btn = e.target.closest('button'); if (!btn) return;
@@ -1448,7 +1626,7 @@
   function init(data){
     DATA = data;
     buildDatePresets();
-    INV_SNAPSHOT_DATE = '2026-09-16';
+    INV_SNAPSHOT_DATE = '2026-09-30';
     populateFilters();
     document.getElementById('footer-notes').innerHTML =
       '<strong>Methodology &amp; assumptions.</strong> Sales figures include Amazon orders with status "Shipped" only (cancelled/pending orders excluded). '+
@@ -1461,7 +1639,8 @@
       'Product performance groups SKUs by style (across sizes/colors) by default — switch to "By SKU/size" for size-level detail. "Trend" compares the selected period to the immediately preceding period of equal length. '+
       'Product/SKU names link to their Amazon listing (amazon.com/dp/ASIN) where an ASIN is on file; a "by style" row links to one representative size\'s listing, since sizes in this catalog are separate ASINs rather than a parent/child variation. '+
       '"Days of supply" buckets estimate how long current stock lasts at the 90-day sell rate (falling back to weeks-of-cover ×7 when days-of-supply isn\'t reported); click a bar to list its SKUs. '+
-      '"Broken size runs" flags style+color combinations with 4+ historical sizes where 3 or fewer are still in stock — candidates to bundle the remainder or merge into one listing rather than keep selling fragmented single-size listings.';
+      '"Broken size runs" flags style+color combinations with 4+ historical sizes where 3 or fewer are still in stock — candidates to bundle the remainder or merge into one listing rather than keep selling fragmented single-size listings. '+
+      (DATA.returns ? ('<strong>Returns.</strong> Sourced from the Amazon FBA Customer Returns report, currently a single fixed window (' + DATA.returns.dateMin + ' to ' + DATA.returns.dateMax + ') rather than a rolling range — it is not affected by the date-range picker. Return rate = units returned &divide; units sold in that same window. The overall and by-category rates match sold units to the exact return window (day-level); the per-SKU rate falls back to matching by calendar month, the finest granularity available for monthly sales-by-SKU, so it can be slightly less precise for SKUs with uneven daily sales near the window\'s edges.') : '');
     document.getElementById('loading').style.display='none';
     document.getElementById('app').style.display='block';
     renderAll();
