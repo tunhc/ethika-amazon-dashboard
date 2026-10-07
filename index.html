@@ -1069,28 +1069,28 @@
   function returnsWindowLabel(){
     if (!DATA.returns) return '';
     var a = DATA.returns.dateMin, b = DATA.returns.dateMax;
+    var fmtD = function(iso){ return new Date(iso + 'T00:00:00Z').toLocaleString('en-US', {month:'short', day:'numeric', timeZone:'UTC'}); };
     if (a.slice(0,7) === b.slice(0,7)){
-      var d = new Date(a + 'T00:00:00Z');
-      return d.toLocaleString('en-US', {month:'short', year:'numeric', timeZone:'UTC'});
+      return new Date(a + 'T00:00:00Z').toLocaleString('en-US', {month:'short', year:'numeric', timeZone:'UTC'});
     }
-    return a + '–' + b;
+    return fmtD(a) + ' – ' + fmtD(b);
   }
   function formatReasonLabel(code){
     if (!code) return 'No reason given';
     return code.replace(/_/g,' ').toLowerCase().replace(/\b\w/g, function(c){ return c.toUpperCase(); });
   }
   function getReturnsSummary(){
-    if (!DATA.returns) return {qty:0, sold:0};
+    if (!DATA.returns) return {qty:0, rateQty:0, sold:0};
     var divIdx = state.divIdx, catIdx = state.catIdx;
-    if (divIdx<0 && catIdx<0) return {qty: DATA.returns.totalQty, sold: DATA.returns.soldOverall};
-    var qty=0, sold=0;
+    if (divIdx<0 && catIdx<0) return {qty: DATA.returns.totalQty, rateQty: DATA.returns.rateQty, sold: DATA.returns.soldOverall};
+    var qty=0, sold=0, rateQty=0;
     DATA.returns.byCat.forEach(function(r){
       var ci=r[0], di=r[1], q=r[2], s=r[3];
       if (divIdx>=0 && di!==divIdx) return;
       if (catIdx>=0 && ci!==catIdx) return;
-      qty += q; sold += s;
+      qty += q; sold += s; rateQty += (r[4]||0);
     });
-    return {qty:qty, sold:sold};
+    return {qty:qty, rateQty:rateQty, sold:sold};
   }
   function returnRateByCat(){
     var divIdx = state.divIdx, catIdx = state.catIdx;
@@ -1099,7 +1099,7 @@
       if (catIdx>=0 && r[0]!==catIdx) return false;
       return r[3] > 0;
     }).map(function(r){
-      return {catIdx:r[0], divIdx:r[1], qty:r[2], sold:r[3], rate: r[2]/r[3]*100};
+      return {catIdx:r[0], divIdx:r[1], qty:r[4], sold:r[3], rate: r[4]/r[3]*100};
     }).sort(function(a,b){ return b.rate - a.rate; }).slice(0,10);
   }
   function renderReturnsTrend(rows){
@@ -1139,13 +1139,13 @@
     if (!DATA.returns) return;
     var divIdx = state.divIdx, catIdx = state.catIdx;
     var rsum = getReturnsSummary();
-    var rate = rsum.sold>0 ? rsum.qty/rsum.sold*100 : null;
+    var rate = rsum.sold>0 ? rsum.rateQty/rsum.sold*100 : null;
 
     document.getElementById('returns-period-note').textContent =
       'Return window: ' + DATA.returns.dateMin + ' to ' + DATA.returns.dateMax +
       (divIdx>=0 ? ' · ' + divName(divIdx) : '') +
       (catIdx>=0 ? ' · ' + DATA.meta.categories[catIdx] : '') +
-      ' — fixed snapshot, not affected by the date-range filter above';
+      ' — return rate measured through ' + DATA.returns.rateEnd + ' (later days have incomplete sales); not affected by the date-range filter above';
 
     var skuRows = DATA.returns.bySku.filter(function(r){
       if (divIdx>=0 && r[2]!==divIdx) return false;
@@ -1255,7 +1255,7 @@
     var t4=tile(aovLabel, '$'+aov.toFixed(2)); kpiHost.appendChild(t4); renderDelta(t4.querySelector('[data-delta]'), aov, aovPrev);
     if (DATA.returns){
       var rsumKpi = getReturnsSummary();
-      var rateKpi = rsumKpi.sold>0 ? rsumKpi.qty/rsumKpi.sold*100 : null;
+      var rateKpi = rsumKpi.sold>0 ? rsumKpi.rateQty/rsumKpi.sold*100 : null;
       var t5=tile('Return rate ('+returnsWindowLabel()+')', rateKpi!=null?rateKpi.toFixed(1)+'%':'–');
       kpiHost.appendChild(t5);
       t5.querySelector('[data-delta]').remove();
@@ -1626,7 +1626,7 @@
   function init(data){
     DATA = data;
     buildDatePresets();
-    INV_SNAPSHOT_DATE = '2026-09-30';
+    INV_SNAPSHOT_DATE = '2026-10-02';
     populateFilters();
     document.getElementById('footer-notes').innerHTML =
       '<strong>Methodology &amp; assumptions.</strong> Sales figures include Amazon orders with status "Shipped" only (cancelled/pending orders excluded). '+
@@ -1640,7 +1640,7 @@
       'Product/SKU names link to their Amazon listing (amazon.com/dp/ASIN) where an ASIN is on file; a "by style" row links to one representative size\'s listing, since sizes in this catalog are separate ASINs rather than a parent/child variation. '+
       '"Days of supply" buckets estimate how long current stock lasts at the 90-day sell rate (falling back to weeks-of-cover ×7 when days-of-supply isn\'t reported); click a bar to list its SKUs. '+
       '"Broken size runs" flags style+color combinations with 4+ historical sizes where 3 or fewer are still in stock — candidates to bundle the remainder or merge into one listing rather than keep selling fragmented single-size listings. '+
-      (DATA.returns ? ('<strong>Returns.</strong> Sourced from the Amazon FBA Customer Returns report, currently a single fixed window (' + DATA.returns.dateMin + ' to ' + DATA.returns.dateMax + ') rather than a rolling range — it is not affected by the date-range picker. Return rate = units returned &divide; units sold in that same window. The overall and by-category rates match sold units to the exact return window (day-level); the per-SKU rate falls back to matching by calendar month, the finest granularity available for monthly sales-by-SKU, so it can be slightly less precise for SKUs with uneven daily sales near the window\'s edges.') : '');
+      (DATA.returns ? ('<strong>Returns.</strong> Sourced from the Amazon FBA Customer Returns report, merged from the monthly exports on file (' + DATA.returns.dateMin + ' to ' + DATA.returns.dateMax + ') rather than a rolling range — it is not affected by the date-range picker. Return rate = units returned &divide; units sold over the same dates, measured only through ' + DATA.returns.rateEnd + ' because sales for the most recent days are still incomplete in the export. Returns lag sales by days to weeks, so the most recent weeks will look better than they finally will. The overall and by-category rates match sold units to the exact return window (day-level); the per-SKU rate falls back to matching by calendar month, the finest granularity available for monthly sales-by-SKU, so it can be slightly less precise for SKUs with uneven daily sales near the window\'s edges.') : '');
     document.getElementById('loading').style.display='none';
     document.getElementById('app').style.display='block';
     renderAll();
