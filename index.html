@@ -1626,10 +1626,10 @@
   function init(data){
     DATA = data;
     buildDatePresets();
-    INV_SNAPSHOT_DATE = '2026-10-08';
+    INV_SNAPSHOT_DATE = '2026-10-13';
     populateFilters();
     document.getElementById('footer-notes').innerHTML =
-      '<strong>Methodology &amp; assumptions.</strong> Sales figures include Amazon orders with status "Shipped" only (cancelled/pending orders excluded). '+
+      '<strong>Methodology &amp; assumptions.</strong> Sales figures include Amazon orders with status "Shipped", plus "Pending"/"Shipping" orders placed in the last 14 days of the data (in-flight orders, so recent days are not understated; a small share of pending orders will still cancel). Older pending rows are stale and excluded, and cancelled orders are always excluded. '+
       'Revenue is normalized to USD using approximate fixed FX rates (1 CAD ≈ $0.73, 1 MXN ≈ $0.055, 1 BRL ≈ $0.18); ~99% of order volume is already USD (Amazon.com/US). '+
       'Category and division come from the product master file matched by SKU; about 2% of lifetime revenue comes from SKUs with no master-file match and is grouped under "Unknown" (shown once per division it actually occurs in). This match rate is uneven over time — newer, not-yet-catalogued styles make "Unknown" a much bigger slice of recent periods than of the multi-year average, so treat recent "Unknown" revenue as real sales awaiting the correct category rather than noise. '+
       '"Orders" is a true deduplicated order count (available for All divisions / All categories); once a division or category filter is applied it becomes "order lines" — a single Amazon order can span multiple categories, so line counts avoid double-counting revenue while staying honest about what is measured. '+
