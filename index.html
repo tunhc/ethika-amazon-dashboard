@@ -1626,7 +1626,7 @@
   function init(data){
     DATA = data;
     buildDatePresets();
-    INV_SNAPSHOT_DATE = '2026-10-13';
+    INV_SNAPSHOT_DATE = (DATA.meta.inventorySnapshot || '2026-10-13');
     populateFilters();
     document.getElementById('footer-notes').innerHTML =
       '<strong>Methodology &amp; assumptions.</strong> Sales figures include Amazon orders with status "Shipped", plus "Pending"/"Shipping" orders placed in the last 14 days of the data (in-flight orders, so recent days are not understated; a small share of pending orders will still cancel). Older pending rows are stale and excluded, and cancelled orders are always excluded. '+
